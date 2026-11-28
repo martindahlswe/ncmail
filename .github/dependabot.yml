@@ -1,0 +1,44 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # New versions wait a week before they're proposed: malicious releases of npm packages are usually
+    # found and pulled within days. Security updates come right away.
+    cooldown:
+      default-days: 7
+    # Major versions of these need code or config changes, so they are upgraded by hand
+    ignore:
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
+    groups:
+      build-tooling:
+        patterns: ['vite', '@vitejs/*', 'vitest', 'typescript', 'tsx']
+      react:
+        patterns: ['react', 'react-dom', '@types/react*']
+      mail:
+        patterns: ['imapflow', 'mailparser', 'nodemailer', '@types/mailparser', '@types/nodemailer']
+  # Actions are pinned to commit SHAs; Dependabot updates the SHA and the version comment together
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+  # Base images are pinned by digest next to their tag; Dependabot updates the digest (and the tag) together
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+  # The test servers CI starts (keep the postgres digest in .github/workflows/ci.yml in step by hand)
+  - package-ecosystem: docker-compose
+    directory: /testing
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7

@@ -1,0 +1,132 @@
+name: Release
+
+# Push a tag like v0.1.0 (see CONTRIBUTING.md). This builds the container image, publishes it to GitHub's
+# container registry, and creates a DRAFT GitHub Release with the Nextcloud app archive attached.
+# The tag must point at a commit on main. The image job runs in the `release` environment, so publishing waits for
+# a maintainer's approval (required reviewers are set in the repository's environment settings).
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify the tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0   # origin/main, for the check below
+          persist-credentials: false
+      - name: The tag is on main
+        run: git merge-base --is-ancestor HEAD origin/main || { echo "::error::$GITHUB_REF_NAME is not on main"; exit 1; }
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: The tag matches the version in the code
+        run: node scripts/set-version.mjs --check --tag "$GITHUB_REF_NAME"
+      - name: The changelog has this version
+        run: grep -q "^## \[${GITHUB_REF_NAME#v}\]" CHANGELOG.md
+      - run: pnpm typecheck
+      - name: Build the web app (the tests check how it is served)
+        run: pnpm build
+      - run: pnpm test:up
+      - run: pnpm test
+
+  image:
+    name: Container image
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: release
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ steps.meta.outputs.version }}
+          provenance: true
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    name: Draft release
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      # Nextcloud's code signature, once the app has its certificate (docs/app-store.md); without the secrets the archive is
+      # unsigned as before, which is fine for installing it by hand
+      - name: Sign the Nextcloud app
+        env:
+          NEXTCLOUD_APP_KEY: ${{ secrets.NEXTCLOUD_APP_KEY }}
+          NEXTCLOUD_APP_CERT: ${{ secrets.NEXTCLOUD_APP_CERT }}
+        run: |
+          if [ -n "$NEXTCLOUD_APP_KEY" ] && [ -n "$NEXTCLOUD_APP_CERT" ]; then sh scripts/sign-nextcloud-app.sh
+          else echo "::notice::NEXTCLOUD_APP_KEY / NEXTCLOUD_APP_CERT are not set: the app archive is not signed (fine for a manual install, required for the App Store)"; fi
+      - name: Build the Nextcloud app archive
+        run: node scripts/package-nextcloud-app.mjs
+      - name: Release notes from the changelog
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          # this version's section, up to the next version or the link definitions at the end
+          awk -v v="$v" '$0 ~ "^## \\[" v "\\]" {on=1; next} /^## \[/ || /^\[[^]]+\]: / {on=0} on' CHANGELOG.md > notes.md
+          # links that are relative in the repository point at this tag's files on the release page
+          sed -E -i "s#\]\(((docs/|[A-Z]+\.md)[^)]*)\)#](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/\1)#g" notes.md
+          {
+            echo
+            echo "### Install"
+            echo
+            echo "- Container: \`docker pull ghcr.io/${GITHUB_REPOSITORY}:${v}\`"
+            echo "- Nextcloud app: download \`ncmail-${v}.tar.gz\` below, unpack it into Nextcloud's \`custom_apps/\` and run \`occ app:enable ncmail\`."
+            echo
+            echo "See the [README](https://github.com/${GITHUB_REPOSITORY}#install) for setup."
+          } >> notes.md
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/ncmail-*.tar.gz dist/ncmail-*.tar.gz.sha256 \
+            --draft $prerelease --title "NCMail ${GITHUB_REF_NAME#v}" --notes-file notes.md --verify-tag

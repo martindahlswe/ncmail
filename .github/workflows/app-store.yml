@@ -1,0 +1,51 @@
+name: App Store
+
+# Uploads a published release's Nextcloud app to the Nextcloud App Store. Started by hand only (Actions > App Store >
+# Run workflow), never automatically: the maintainer decides when a release goes to the App Store. Needs the secrets in
+# docs/app-store.md, and a release whose archive was signed (the release workflow signs it when the secrets are set).
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The published release to upload, for example v1.0.0"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    name: Upload ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release # waits for a maintainer's approval, like the container image
+    steps:
+      - name: The release is published, and its archive is signed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          case "$TAG" in v[0-9]*) ;; *) echo "::error::$TAG is not a release tag"; exit 1 ;; esac
+          v="${TAG#v}"
+          test "$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = "false" || { echo "::error::$TAG is not published"; exit 1; }
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p "ncmail-${v}.tar.gz" -p "ncmail-${v}.tar.gz.sha256"
+          sha256sum -c "ncmail-${v}.tar.gz.sha256"
+          tar -tzf "ncmail-${v}.tar.gz" | grep -qx 'ncmail/appinfo/signature.json' || { echo "::error::ncmail-${v}.tar.gz is not signed (set NEXTCLOUD_APP_KEY and NEXTCLOUD_APP_CERT, then release again)"; exit 1; }
+      - name: Upload to the App Store
+        env:
+          NEXTCLOUD_APP_KEY: ${{ secrets.NEXTCLOUD_APP_KEY }}
+          APPSTORE_TOKEN: ${{ secrets.NEXTCLOUD_APPSTORE_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          test -n "$NEXTCLOUD_APP_KEY" && test -n "$APPSTORE_TOKEN" || { echo "::error::NEXTCLOUD_APP_KEY and NEXTCLOUD_APPSTORE_TOKEN must be set (docs/app-store.md)"; exit 1; }
+          v="${TAG#v}"
+          umask 077
+          printf '%s\n' "$NEXTCLOUD_APP_KEY" > app.key
+          # the App Store checks the archive against the app's certificate with this signature
+          sig=$(openssl dgst -sha512 -sign app.key "ncmail-${v}.tar.gz" | openssl base64 -A)
+          rm -f app.key
+          body=$(jq -n --arg d "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/ncmail-${v}.tar.gz" --arg s "$sig" '{download: $d, signature: $s, nightly: false}')
+          code=$(curl -sS -o response.json -w '%{http_code}' -X POST https://apps.nextcloud.com/api/v1/apps/releases \
+            -H "Authorization: Token ${APPSTORE_TOKEN}" -H 'Content-Type: application/json' -d "$body")
+          cat response.json; echo
+          case "$code" in 200|201) echo "Uploaded ncmail ${v} to the App Store" ;; *) echo "::error::The App Store answered ${code}"; exit 1 ;; esac

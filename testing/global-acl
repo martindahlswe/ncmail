@@ -1,0 +1,4 @@
+# Dovecot global ACLs for the test server: u09 manages the public folders; others get access when u09 shares a folder with them.
+# (Entries here take precedence over per-folder sharing, as central policy on a real server would.)
+Public user=u09@example.test lrswipkxtea
+Public/* user=u09@example.test lrswipkxtea

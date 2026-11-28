@@ -1,0 +1,13 @@
+.git
+.github
+node_modules
+**/node_modules
+dist
+**/dist
+.env
+*.log
+infra
+integration
+docs
+deploy
+apps/api/test

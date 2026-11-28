@@ -1,0 +1,37 @@
+# NCMail with its database. Copy this folder, create `.env` next to it (see .env.example) and run:
+#   docker compose up -d
+# The service listens on 127.0.0.1:4000 only: put a reverse proxy with HTTPS in front of it (docs/deployment.md).
+name: ncmail
+services:
+  ncmail:
+    # The release this file came with; set NCMAIL_VERSION in .env to update (docs/deployment.md#updating)
+    image: ghcr.io/martindahlswe/ncmail:${NCMAIL_VERSION:-0.1.0}
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgres://ncmail:${POSTGRES_PASSWORD}@postgres:5432/ncmail
+      SECRET_KEY: ${SECRET_KEY}
+      NEXTCLOUD_URL: ${NEXTCLOUD_URL}
+      NCMAIL_PUBLIC_URL: ${NCMAIL_PUBLIC_URL:-}
+      NCMAIL_AUTH: nextcloud
+      NCMAIL_TRUST_PROXY: "1"
+      NCMAIL_COOKIE_SECURE: "1"
+      # NCMAIL_MAIL_CONFIG: /config/mail-servers.json
+    # volumes:
+    #   - ./mail-servers.json:/config/mail-servers.json:ro
+    ports: ["127.0.0.1:4000:4000"]
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ncmail
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ncmail
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ncmail -d ncmail"]
+      interval: 5s
+      retries: 10
+volumes:
+  pgdata:

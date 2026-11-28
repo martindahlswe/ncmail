@@ -1,0 +1,22 @@
+node_modules
+dist
+.env
+*.log
+.DS_Store
+coverage
+*.tsbuildinfo
+
+CLAUDE.local.md
+.claude/settings.local.json
+
+# local development and benchmark tooling: never committed (see the folder's own README)
+local/
+# tooling of the coding assistant used locally
+.agents/
+skills-lock.json
+
+# made by scripts/sign-nextcloud-app.sh in the release workflow; never committed
+integration/nextcloud-app/ncmail/appinfo/signature.json
+# app signing keys and certificate requests (docs/app-store.md)
+*.key
+*.csr

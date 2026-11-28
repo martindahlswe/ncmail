@@ -1,0 +1,216 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Typecheck, audit and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Versions agree everywhere
+        run: pnpm version:check
+      - run: pnpm typecheck
+      - name: Dependency audit (high and above)
+        run: pnpm audit --audit-level high
+      - name: Build the web app
+        run: pnpm build
+      - name: Start the test mail servers
+        run: pnpm test:up
+      - name: Tests
+        run: pnpm test
+      - name: Show the test servers' log when something failed
+        if: failure()
+        run: docker compose -f testing/docker-compose.yml logs --no-color --tail 100
+
+  browser:
+    name: Browser tests (Chromium, Firefox, WebKit)
+    # pinned: Playwright's browser builds only support some Ubuntu releases, and ubuntu-latest moves without notice
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build the web app
+        run: pnpm build
+      - name: Start the test mail servers
+        run: pnpm test:up
+      - name: Install the browsers
+        run: pnpm --filter @ncmail/e2e exec playwright install --with-deps chromium firefox webkit
+      - name: Browser tests
+        run: pnpm test:e2e
+      - name: Keep the report, screenshots and traces of failed tests
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-test-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          retention-days: 14
+
+  nextcloud:
+    name: Nextcloud ${{ matrix.nextcloud }}
+    # pinned: Playwright's browser builds only support some Ubuntu releases
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # every version appinfo/info.xml declares (min-version to max-version)
+        nextcloud: ["33", "34", "35"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Every declared Nextcloud version is tested
+        run: |
+          range=$(grep -o 'min-version="[0-9]*" max-version="[0-9]*"' integration/nextcloud-app/ncmail/appinfo/info.xml)
+          test "$range" = 'min-version="33" max-version="35"' || { echo "info.xml declares $range; update the matrix above to match"; exit 1; }
+      - name: Build the web app
+        run: pnpm build
+      - name: Start the test mail servers
+        run: pnpm test:up
+      - name: Install the browser
+        run: pnpm --filter @ncmail/e2e exec playwright install --with-deps chromium
+      - name: The app in Nextcloud ${{ matrix.nextcloud }}
+        run: pnpm test:nextcloud
+        env:
+          NC_VERSION: ${{ matrix.nextcloud }}
+      - name: Keep the report, screenshots and traces of failed tests
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nextcloud-${{ matrix.nextcloud }}-report
+          path: |
+            e2e/playwright-report-nextcloud
+            e2e/test-results-nextcloud
+          retention-days: 14
+
+  upgrade:
+    name: Upgrade from the previous release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read # to pull the previous release's image from GHCR
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Start the test mail servers
+        run: pnpm test:up
+      - name: Build the new image
+        run: docker build --build-arg VERSION="$(node -p "require('./package.json').version")-ci" -t ncmail:upgrade-new .
+      - name: Sign in to GHCR
+        run: echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upgrade from the latest release with real data
+        run: pnpm test:upgrade
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  nextcloud-app:
+    name: Nextcloud app
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - name: PHP syntax check
+        run: find integration/nextcloud-app -name '*.php' -print0 | xargs -0 -n1 php -l
+      - name: info.xml is valid for the App Store
+        run: |
+          command -v xmllint >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq libxml2-utils; }
+          curl -fsS -o info.xsd https://apps.nextcloud.com/schema/apps/info.xsd
+          xmllint --noout --schema info.xsd integration/nextcloud-app/ncmail/appinfo/info.xml
+      - name: No signature or signing key is committed
+        run: |
+          test ! -e integration/nextcloud-app/ncmail/appinfo/signature.json || { echo "::error::appinfo/signature.json is made by the release workflow, not committed"; exit 1; }
+          ! git ls-files | grep -E '\.(key|csr)$' || { echo "::error::a key or certificate request is committed"; exit 1; }
+      - name: Build the app archive
+        run: node scripts/package-nextcloud-app.mjs
+
+  image:
+    name: Container image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          tags: ncmail:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Start it and check it answers
+        run: |
+          docker network create ci
+          # same image as testing/docker-compose.yml, where Dependabot keeps the digest current
+          docker run -d --network ci --name db -e POSTGRES_PASSWORD=ncmail -e POSTGRES_USER=ncmail -e POSTGRES_DB=ncmail postgres:17@sha256:87c8b42f423b45d5247e6aa8fdb2e7762fec164c68a50fe3eb07e7bfcaf4dbcf
+          until docker exec db pg_isready -U ncmail -d ncmail; do sleep 1; done
+          docker run -d --network ci --name app -p 4000:4000 \
+            -e DATABASE_URL=postgres://ncmail:ncmail@db:5432/ncmail -e SECRET_KEY="$(openssl rand -base64 32)" -e NCMAIL_AUTH=off ncmail:ci
+          for i in $(seq 1 40); do curl -fs http://127.0.0.1:4000/api/health && exit 0; sleep 2; done
+          docker logs app
+          exit 1
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

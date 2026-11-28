@@ -1,0 +1,35 @@
+{
+  "name": "ncmail",
+  "version": "0.1.0",
+  "description": "A fast webmail client that runs as an app inside Nextcloud",
+  "license": "Apache-2.0",
+  "author": "Martin Dahl",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/martindahlswe/ncmail.git"
+  },
+  "private": true,
+  "packageManager": "pnpm@12.23.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel --filter @ncmail/api --filter @ncmail/web dev",
+    "build": "pnpm --filter @ncmail/web build",
+    "start": "pnpm build && pnpm --filter @ncmail/api start",
+    "typecheck": "pnpm -r typecheck",
+    "test:up": "docker compose -f testing/docker-compose.yml up -d --wait",
+    "test:down": "docker compose -f testing/docker-compose.yml down",
+    "test": "pnpm --filter @ncmail/api test",
+    "test:e2e": "pnpm --filter @ncmail/e2e test",
+    "test:upgrade": "pnpm --filter @ncmail/api test:upgrade",
+    "test:nextcloud": "pnpm --filter @ncmail/e2e test:nextcloud",
+    "verify": "node scripts/verify.mjs",
+    "verify:full": "node scripts/verify.mjs --full",
+    "adopt-accounts": "pnpm --filter @ncmail/api adopt-accounts",
+    "version:set": "node scripts/set-version.mjs",
+    "version:check": "node scripts/set-version.mjs --check",
+    "package:nextcloud-app": "node scripts/package-nextcloud-app.mjs",
+    "docker:build": "docker build -t ncmail:dev ."
+  }
+}

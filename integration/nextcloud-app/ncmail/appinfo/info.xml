@@ -1,0 +1,58 @@
+<?xml version="1.0"?>
+<info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
+	<id>ncmail</id>
+	<name>NCMail</name>
+	<summary>A fast mail client inside Nextcloud, for big mailboxes and any IMAP server</summary>
+	<description><![CDATA[NCMail is a fast webmail client that runs inside Nextcloud. It mirrors message headers into PostgreSQL, so lists, search and conversations stay fast with hundreds of thousands of messages, and it works with any IMAP and SMTP server.
+
+**This app needs the NCMail mail service**, a separate container that does the mail work. Install the service first, then this app, and point the app at the service's address: see [the installation guide](https://github.com/martindahlswe/ncmail#install).
+
+What you get:
+
+- **Mail** in the Nextcloud menu, opened inside Nextcloud and signed in as you
+- Conversations, fast search with operators, labels, snooze, send later, templates, filters and out-of-office (Sieve)
+- Shared folders as your mail server offers them, OpenPGP and S/MIME, phishing warnings, read receipts
+- New mail in Nextcloud's notifications and search, "Send by mail" in Files, and invitations into Calendar
+- An **Administration > Mail** page to set up your organisation's mail servers once, with connection checks
+
+It deliberately has no OAuth2 sign-in (use passwords or app passwords) and is in English only.]]></description>
+	<version>0.1.0</version>
+	<licence>apache</licence>
+	<author>Martin Dahl</author>
+	<namespace>NcMail</namespace>
+	<documentation>
+		<user>https://github.com/martindahlswe/ncmail/blob/main/docs/features.md</user>
+		<admin>https://github.com/martindahlswe/ncmail/blob/main/docs/deployment.md</admin>
+		<developer>https://github.com/martindahlswe/ncmail/blob/main/CONTRIBUTING.md</developer>
+	</documentation>
+	<category>social</category>
+	<website>https://github.com/martindahlswe/ncmail</website>
+	<bugs>https://github.com/martindahlswe/ncmail/issues</bugs>
+	<repository type="git">https://github.com/martindahlswe/ncmail.git</repository>
+	<screenshot>https://raw.githubusercontent.com/martindahlswe/ncmail/main/docs/screenshots/inbox.jpg</screenshot>
+	<screenshot>https://raw.githubusercontent.com/martindahlswe/ncmail/main/docs/screenshots/compose.jpg</screenshot>
+	<screenshot>https://raw.githubusercontent.com/martindahlswe/ncmail/main/docs/screenshots/filters.jpg</screenshot>
+	<dependencies>
+		<nextcloud min-version="33" max-version="35"/>
+	</dependencies>
+	<background-jobs>
+		<job>OCA\NcMail\BackgroundJob\NewMailJob</job>
+	</background-jobs>
+	<commands>
+		<command>OCA\NcMail\Command\RotateKey</command>
+	</commands>
+	<settings>
+		<admin>OCA\NcMail\Settings\Admin</admin>
+		<admin-section>OCA\NcMail\Settings\Section</admin-section>
+	</settings>
+	<navigations>
+		<navigation>
+			<name>Mail</name>
+			<route>ncmail.page.index</route>
+			<icon>app.svg</icon>
+		</navigation>
+	</navigations>
+	<contactsmenu>
+		<provider>OCA\NcMail\ContactsMenu\MailProvider</provider>
+	</contactsmenu>
+</info>

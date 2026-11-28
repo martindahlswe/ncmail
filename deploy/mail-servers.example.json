@@ -1,0 +1,14 @@
+{
+  "allowCustom": true,
+  "servers": [
+    {
+      "id": "corp",
+      "name": "Company mail",
+      "domains": ["example.com"],
+      "username": "email",
+      "imap": { "host": "imap.example.com", "port": 993, "security": "tls" },
+      "smtp": { "host": "smtp.example.com", "port": 465, "security": "tls" },
+      "sieve": { "host": "imap.example.com", "port": 4190, "security": "starttls" }
+    }
+  ]
+}
